@@ -23,6 +23,7 @@
 #include <photon/io/signal.h>
 #include <photon/photon.h>
 #include <photon/thread/thread.h>
+#include <photon/thread/thread11.h>
 #include <photon/thread/thread-pool.h>
 
 #include <libtcmu.h>
@@ -42,6 +43,8 @@ struct obd_dev {
     TCMUDevLoop *loop;
     uint32_t aio_pending_wakeups;
     uint32_t inflight;
+    std::thread *work;
+    photon::semaphore start, end;
 };
 
 struct handle_args {
@@ -253,6 +256,7 @@ protected:
         while ((cmd = tcmulib_get_next_command(dev, 0)) != NULL) {
             odev->inflight++;
             threadpool.thread_create(&handle, new handle_args{dev, cmd});
+            // photon::thread_create(&handle, new handle_args{dev, cmd});
         }
         return 0;
     }
@@ -312,8 +316,38 @@ static int dev_open(struct tcmu_device *dev) {
     tcmu_dev_set_write_cache_enabled(dev, false);
     tcmu_dev_set_write_protect_enabled(dev, file->read_only);
 
-    odev->loop = new TCMUDevLoop(dev);
-    odev->loop->run();
+    // odev->loop = new TCMUDevLoop(dev);
+    // odev->loop->run();
+
+    auto obd_th = [](obd_dev *odev, struct tcmu_device *dev) {
+        photon::init(photon::INIT_EVENT_EPOLL, photon::INIT_IO_LIBCURL);
+        DEFER(photon::fini());
+
+        photon::log_vcpu = photon::get_vcpu();
+
+        odev->loop = new TCMUDevLoop(dev);
+        odev->loop->run();
+
+        LOG_INFO("obd device running");
+        odev->start.signal(1);
+
+        // while (odev->loop != nullptr && odev->file != nullptr) {
+        //     photon::thread_usleep(200*1000);
+        // }
+        odev->end.wait(1);
+
+        delete odev->loop;
+        LOG_INFO("delete loop");
+        odev->file->close();
+        LOG_INFO("close file");
+        delete odev->file;
+        LOG_INFO("delete file");
+
+        LOG_INFO("obd device exit, nthread `", (int)photon::get_vcpu()->nthreads);
+    };
+
+    odev->work = new std::thread(obd_th, odev, dev);
+    odev->start.wait(1);
 
     struct timeval end;
     gettimeofday(&end, NULL);
@@ -326,10 +360,20 @@ static int dev_open(struct tcmu_device *dev) {
 static int close_cnt = 0;
 static void dev_close(struct tcmu_device *dev) {
     obd_dev *odev = (obd_dev *)tcmu_dev_get_private(dev);
-    delete odev->loop;
-    odev->file->close();
-    delete odev->file;
+    odev->end.signal(1);
+    // delete odev->loop;
+    // odev->loop = nullptr;
+    // LOG_INFO("delete loop");
+    // odev->file->close();
+    // LOG_INFO("close file");
+    // delete odev->file;
+    // odev->file = nullptr;
+    // LOG_INFO("delete file");
+    if (odev->work->joinable()) {
+        odev->work->join();
+    }
     delete odev;
+    LOG_INFO("delete odev");
     close_cnt++;
     if (close_cnt == 500) {
         malloc_trim(128 * 1024);
