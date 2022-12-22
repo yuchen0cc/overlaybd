@@ -323,17 +323,12 @@ static int dev_open(struct tcmu_device *dev) {
         photon::init(photon::INIT_EVENT_EPOLL, photon::INIT_IO_LIBCURL);
         DEFER(photon::fini());
 
-        photon::log_vcpu = photon::get_vcpu();
-
         odev->loop = new TCMUDevLoop(dev);
         odev->loop->run();
 
         LOG_INFO("obd device running");
         odev->start.signal(1);
 
-        // while (odev->loop != nullptr && odev->file != nullptr) {
-        //     photon::thread_usleep(200*1000);
-        // }
         odev->end.wait(1);
 
         delete odev->loop;
@@ -361,14 +356,6 @@ static int close_cnt = 0;
 static void dev_close(struct tcmu_device *dev) {
     obd_dev *odev = (obd_dev *)tcmu_dev_get_private(dev);
     odev->end.signal(1);
-    // delete odev->loop;
-    // odev->loop = nullptr;
-    // LOG_INFO("delete loop");
-    // odev->file->close();
-    // LOG_INFO("close file");
-    // delete odev->file;
-    // odev->file = nullptr;
-    // LOG_INFO("delete file");
     if (odev->work->joinable()) {
         odev->work->join();
     }
