@@ -30,27 +30,9 @@
 #include <photon/fs/filesystem.h>
 #include <photon/common/alog.h>
 #include <photon/common/enumerable.h>
-#include <photon/fs/path.h>
 
 #define BIT_ISSET(bitmask, bit) ((bitmask) & (bit))
 static const char ZERO_BLOCK[T_BLOCKSIZE] = {0};
-
-int mkdir_hier(photon::fs::IFileSystem *fs, const std::string_view &dir) {
-	struct stat s;
-	std::string path(dir);
-    if (fs->lstat(path.c_str(), &s) == 0) {
-		if (S_ISDIR(s.st_mode)) {
-			// LOG_DEBUG("skip mkdir `", path.c_str());
-			return 0;
-		} else {
-			errno = ENOTDIR;
-			// LOG_ERROR("mkdir ` failed, `", path.c_str(), strerror(errno));
-			return -1;
-		}
-    }
-
-	return photon::fs::mkdir_recursive(dir, fs, 0755);
-}
 
 int Tar::read_header_internal() {
 	int i;
@@ -299,7 +281,7 @@ int Tar::extract_all() {
 		}
 	}
 
-	LOG_DEBUG("extract ` file", count);
+	LOG_INFO("extract ` file", count);
 
 	return (i == 1 ? 0 : -1);
 }
@@ -307,16 +289,13 @@ int Tar::extract_all() {
 int Tar::extract_file() {
 	int i;
 
-	// TODO: normalize name, resove symlinks for root + filename
-	std::string npath(get_pathname());
-	if (npath.back() == '/') {
-		npath = npath.substr(0, npath.size() - 1);
-	}
+	// normalize name
+	std::string npath = remove_last_slash(get_pathname());
 	const char *filename = npath.c_str();
 
 	// ensure parent directory exists or is created.
 	photon::fs::Path p(filename);
-	if (mkdir_hier(fs, p.dirname()) < 0) {
+	if (mkdir_hier(p.dirname()) < 0) {
 		return -1;
 	}
 
@@ -336,9 +315,15 @@ int Tar::extract_file() {
 			errno = EEXIST;
 			return -1;
 		} else {
-			if (!(S_ISDIR(s.st_mode) && TH_ISDIR(header))) {
-				// LOG_DEBUG("remove exist file `", npath.c_str());
+			if (!S_ISDIR(s.st_mode)) {
 				if (fs->unlink(npath.c_str()) == -1 && errno != ENOENT) {
+					LOG_ERROR("remove exist file ` failed, `", npath.c_str(), strerror(errno));
+					errno = EEXIST;
+					return -1;
+				}
+			} else if (!TH_ISDIR(header)) {
+				if (remove_all(npath) == -1) {
+					LOG_ERROR("remove exist dir ` failed, `", npath.c_str(), strerror(errno));
 					errno = EEXIST;
 					return -1;
 				}
@@ -391,7 +376,7 @@ int Tar::extract_file() {
 int Tar::extract_regfile(const char *filename) {
 	size_t size = get_size();
 
-	LOG_DEBUG("  ==> extracting: ` (` bytes)\n", filename, size);
+	LOG_DEBUG("  ==> extracting: ` (` bytes)", filename, size);
 	photon::fs::IFile *fout = fs->open(filename, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0666);
 	if (fout == nullptr) {
 		return -1;
@@ -425,7 +410,7 @@ int Tar::extract_regfile(const char *filename) {
 
 int Tar::extract_hardlink(const char *filename) {
 	char *linktgt = get_linkname();
-	LOG_DEBUG("  ==> extracting: ` (link to `)\n", filename, linktgt);
+	LOG_DEBUG("  ==> extracting: ` (link to `)", filename, linktgt);
 	if (fs->link(linktgt, filename) == -1) {
 		LOG_ERROR("link failed, `", strerror(errno));
 		return -1;
@@ -435,7 +420,7 @@ int Tar::extract_hardlink(const char *filename) {
 
 int Tar::extract_symlink(const char *filename) {
 	char *linktgt = get_linkname();
-	LOG_DEBUG("  ==> extracting: ` (symlink to `)\n", filename, linktgt);
+	LOG_DEBUG("  ==> extracting: ` (symlink to `)", filename, linktgt);
 	if (fs->symlink(linktgt, filename) == -1) {
 		LOG_ERROR("symlink failed, `", strerror(errno));
 		return -1;
@@ -446,7 +431,7 @@ int Tar::extract_symlink(const char *filename) {
 int Tar::extract_dir(const char *filename) {
 	mode_t mode = header.get_mode();
 
-	LOG_DEBUG("  ==> extracting: ` (mode `, directory)\n", filename, mode);
+	LOG_DEBUG("  ==> extracting: ` (mode `, directory)", filename, mode);
 	if (fs->mkdir(filename, mode) < 0) {
 		if (errno == EEXIST) {
 			return 1;
@@ -462,7 +447,7 @@ int Tar::extract_block_char_fifo(const char *filename) {
 	auto devmaj = header.get_devmajor();
 	auto devmin = header.get_devminor();
 
-	LOG_DEBUG("  ==> extracting: ` (block/char/fifo `,`)\n", filename, devmaj, devmin);
+	LOG_DEBUG("  ==> extracting: ` (block/char/fifo `,`)", filename, devmaj, devmin);
 	if (fs->mknod(filename, mode, makedev(devmaj, devmin)) == -1) {
 		LOG_ERROR("block/char/fifo failed, `", strerror(errno));
 		return -1;

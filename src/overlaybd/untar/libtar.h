@@ -23,6 +23,7 @@
 #include <grp.h>
 #include <string.h>
 #include <photon/fs/filesystem.h>
+#include <photon/common/string_view.h>
 #include <set>
 #include <string>
 #include <list>
@@ -57,7 +58,7 @@ static void int_to_oct_nonull(int num, char *oct, size_t octlen) {
 }
 
 char* clean_name(char *name);
-
+std::string remove_last_slash(const std::string_view &path);
 
 class TarHeader {
 public:
@@ -89,7 +90,7 @@ public:
 	size_t get_size() { return oct_to_size(size); }
 	int get_devmajor() { return oct_to_int(devmajor); }
 	int get_devminor() { return oct_to_int(devminor); }
-	char *get_linkname() { return gnu_longlink ? gnu_longlink : linkname; }
+
 	bool crc_ok() {
 		return (get_crc() == crc_calc() || get_crc() == signed_crc_calc());
 	}
@@ -146,6 +147,7 @@ public:
 	uint64_t fs_blockmask;
 	TarHeader header;
 	char *th_pathname = nullptr;
+	char *th_linkname = nullptr;
 	std::set<std::string> unpackedPaths;
 	std::list<std::pair<std::string, int>> dirs;	// <path, utime>
 	PaxHeader *pax = nullptr;
@@ -158,6 +160,8 @@ public:
 	~Tar() {
 		if (th_pathname != nullptr)
 			free(th_pathname);
+		if (th_linkname != nullptr)
+			free(th_linkname);
 		if (pax != nullptr)
 			delete pax;
 	}
@@ -180,6 +184,9 @@ private:
 
 	int set_file_perms(const char *filename);
 	int convert_whiteout(const char *filename);
+
+	int mkdir_hier(const std::string_view &dir);
+	int remove_all(const std::string &path, bool rmdir = true);
 };
 
 /* constant values for the TAR options field */

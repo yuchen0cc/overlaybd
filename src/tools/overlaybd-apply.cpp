@@ -51,19 +51,37 @@ IFile *open_file(const char *fn, int flags, mode_t mode = 0) {
 int main(int argc, char **argv) {
     string commit_msg;
     string parent_uuid;
-    std::string image_config_path, input_path;
-    bool compress_zfile = false;
+    std::string image_config_path, input_path, config_path;
+    bool raw = false, verbose = false;
 
     CLI::App app{"this is overlaybd-apply, apply OCIv1 tar layer to overlaybd format"};
+    app.add_flag("--raw", raw, "apply to raw image");
+    app.add_flag("--verbose", verbose, "output debug info");
+    app.add_option("--service_config_path", config_path, "overlaybd image service config path")->type_name("FILEPATH")->check(CLI::ExistingFile);
     app.add_option("input_path", input_path, "input OCIv1 tar layer path")->type_name("FILEPATH")->check(CLI::ExistingFile)->required();
     app.add_option("image_config_path", image_config_path, "overlaybd image config path")->type_name("FILEPATH")->check(CLI::ExistingFile)->required();
     CLI11_PARSE(app, argc, argv);
 
-    set_log_output_level(1);
+    set_log_output_level(verbose ? 0 : 1);
     photon::init(photon::INIT_EVENT_DEFAULT, photon::INIT_IO_DEFAULT);
 
-    auto imgservice = create_image_service();
-    ImageFile *imgfile = imgservice->create_image_file(image_config_path.c_str());
+    photon::fs::IFile *imgfile = nullptr;
+    if (raw) {
+        imgfile = open_file(image_config_path.c_str(), O_RDWR, 0644);
+    } else {
+        ImageService * imgservice = nullptr;
+        if (config_path.empty()) {
+            imgservice = create_image_service();
+        } else {
+            imgservice = create_image_service(config_path.c_str());
+        }
+        if (imgservice == nullptr) {
+            fprintf(stderr, "failed to create image service\n");
+            return -1;
+        }
+        imgfile = imgservice->create_image_file(image_config_path.c_str());
+    }
+        
     if (imgfile == nullptr) {
         fprintf(stderr, "failed to create image file\n");
         exit(-1);

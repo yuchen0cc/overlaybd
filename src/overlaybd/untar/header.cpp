@@ -77,6 +77,13 @@ char* clean_name(char *name) {
 	return name;
 }
 
+std::string remove_last_slash(const std::string_view &path) {
+	if (path.back() == '/')
+		return std::string(path.substr(0, path.size() - 1));
+	else
+		return std::string(path);
+}
+
 char* Tar::get_pathname() {
 	if (pax && pax->path)
 		return clean_name(pax->path);
@@ -109,11 +116,19 @@ char* Tar::get_pathname() {
 }
 
 char* Tar::get_linkname() {
-	if (pax && pax->linkpath) {
+	if (pax && pax->linkpath)
 		return clean_name(pax->linkpath);
-	} else {
-		return clean_name(header.get_linkname());
+	if (header.gnu_longlink)
+		return clean_name(header.gnu_longlink);
+
+	if (th_linkname == nullptr) {
+		th_linkname = (char *)malloc(MAXPATHLEN * sizeof(char));
+		if (th_linkname == nullptr)
+			return nullptr;
 	}
+
+	snprintf(th_linkname, MAXPATHLEN, "%.100s", header.linkname);
+	return clean_name(th_linkname);
 }
 
 size_t Tar::get_size() {
