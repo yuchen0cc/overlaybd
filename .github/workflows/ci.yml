@@ -1,0 +1,16 @@
+name: CI test
+
+on:
+  push:
+    branches:
+    - ci_test
+
+jobs:
+  ci-test:
+    name: CI Test"
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: "check env"
+        shell: bash
+        run: |
+          ls -l /
